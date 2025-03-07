@@ -1,4 +1,4 @@
-// File: app.js
+// File: server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
@@ -10,6 +10,10 @@ require('dotenv').config();
 
 const app = express();
 app.use(express.json());
+
+const cors = require('cors');
+app.use(cors());
+
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fileUploadApp')
