@@ -5,19 +5,23 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
 // CORS Configuration
-const cors = require('cors');
-app.use(cors({
+const corsOptions = {
   origin: 'https://orincore.com', // Allow only your frontend
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Allowed methods
   allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
   credentials: true // Allow credentials (cookies, tokens)
-}));
+};
+app.use(cors(corsOptions));
+
+// Handle preflight requests globally
+app.options('*', cors(corsOptions));
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fileUploadApp')
@@ -182,48 +186,55 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Upload file
-app.post('/api/upload', authenticate, (req, res, next) => {
-  upload.single('file')(req, res, (err) => {
-    if (err instanceof multer.MulterError) {
-      // Handle multer errors (e.g., file size limit)
-      return res.status(400).json({ message: err.message });
-    } else if (err) {
-      // Handle other errors (e.g., file type validation)
-      return res.status(400).json({ message: err.message });
-    }
-    next();
-  });
-}, async (req, res) => {
+// Profile endpoint
+app.get('/api/profile', authenticate, async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-    }
-
-    // Save file info to database
-    const file = new File({
-      filename: req.file.filename,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      userId: req.user.id
-    });
-
-    await file.save();
-
-    res.status(201).json({
-      message: 'File uploaded successfully',
-      file: {
-        id: file._id,
-        filename: file.filename,
-        originalname: file.originalname,
-        size: file.size,
-        uploadDate: file.uploadDate
-      }
-    });
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
+});
+
+// Upload file
+app.post('/api/upload', authenticate, (req, res, next) => {
+  upload.single('file')(req, res, async (err) => {
+    try {
+      if (err) {
+        console.error('Upload error:', err);
+        return res.status(400).json({ message: err.message });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      // Save file info to database
+      const file = new File({
+        filename: req.file.filename,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        userId: req.user.id
+      });
+
+      await file.save();
+
+      res.status(201).json({
+        message: 'File uploaded successfully',
+        file: {
+          id: file._id,
+          filename: file.filename,
+          originalname: file.originalname,
+          size: file.size,
+          uploadDate: file.uploadDate
+        }
+      });
+    } catch (error) {
+      console.error('Upload processing error:', error);
+      res.status(500).json({ message: 'Server error', error: error.message });
+    }
+  });
 });
 
 // Get user's files
