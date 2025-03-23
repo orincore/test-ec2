@@ -11,16 +11,20 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-// CORS Configuration
+// Improved CORS Configuration
 const corsOptions = {
-  origin: 'https://orincore.com', // Allow only your frontend
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Allowed methods
-  allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
-  credentials: true // Allow credentials (cookies, tokens)
+  origin: 'https://orincore.com',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Disposition'],
+  credentials: true,
+  maxAge: 86400 // Cache preflight requests for 24 hours
 };
+
+// Apply CORS to all routes
 app.use(cors(corsOptions));
 
-// Handle preflight requests globally
+// Handle preflight requests
 app.options('*', cors(corsOptions));
 
 // Connect to MongoDB
@@ -103,34 +107,9 @@ const storage = multer.diskStorage({
   }
 });
 
-// Define file filter for allowed extensions
-const fileFilter = (req, file, cb) => {
-  // Allowed file types
-  const allowedFileTypes = [
-    'application/vnd.ms-excel', // xls
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
-    'application/msword', // doc
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
-    'application/vnd.ms-powerpoint', // ppt
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
-    'application/pdf', // pdf
-    'application/zip', // zip
-    'image/png', // png
-    'image/jpeg' // jpg/jpeg
-  ];
-
-  // Check if the uploaded file type is allowed
-  if (allowedFileTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Unsupported file type. Only XLS, DOCS, PPT, PDF, ZIP, PNG, and JPEG files are allowed.'), false);
-  }
-};
-
-// Configure multer upload (no file size limit)
+// Configure multer upload (no file size or type restrictions)
 const upload = multer({
   storage: storage,
-  fileFilter: fileFilter,
   limits: { fileSize: Infinity } // No file size limit
 });
 
@@ -196,8 +175,14 @@ app.get('/api/profile', authenticate, async (req, res) => {
   }
 });
 
-// Upload file
-app.post('/api/upload', authenticate, (req, res, next) => {
+// Improved file upload endpoint
+app.post('/api/upload', authenticate, (req, res) => {
+  // Set timeout for large uploads
+  req.setTimeout(600000); // 10 minutes timeout
+  
+  // Log upload start
+  console.log(`File upload started for user: ${req.user.id}`);
+  
   upload.single('file')(req, res, async (err) => {
     try {
       if (err) {
@@ -209,6 +194,9 @@ app.post('/api/upload', authenticate, (req, res, next) => {
         return res.status(400).json({ message: 'No file uploaded' });
       }
 
+      // Log successful upload
+      console.log(`File uploaded: ${req.file.originalname}, size: ${req.file.size} bytes`);
+
       // Save file info to database
       const file = new File({
         filename: req.file.filename,
@@ -219,6 +207,12 @@ app.post('/api/upload', authenticate, (req, res, next) => {
       });
 
       await file.save();
+
+      // Send CORS headers explicitly
+      res.header('Access-Control-Allow-Origin', 'https://orincore.com');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.header('Access-Control-Allow-Credentials', 'true');
 
       res.status(201).json({
         message: 'File uploaded successfully',
@@ -266,15 +260,27 @@ app.delete('/api/files/:id', authenticate, async (req, res) => {
 
     // Delete file from EBS volume
     const filePath = path.join(EBS_UPLOAD_PATH, req.user.id, file.filename);
-    fs.unlinkSync(filePath);
+    
+    // Check if file exists before attempting to delete
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    } else {
+      console.warn(`File not found on disk: ${filePath}`);
+    }
 
     // Delete file record from database
     await File.deleteOne({ _id: req.params.id });
 
     res.json({ message: 'File deleted successfully' });
   } catch (error) {
+    console.error('File deletion error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
 });
 
 // Error handling middleware
@@ -296,6 +302,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`CORS enabled for origin: https://orincore.com`);
 });
 
 module.exports = app;
