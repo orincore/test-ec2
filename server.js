@@ -1,4 +1,3 @@
-// File: server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
@@ -11,9 +10,14 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
+// CORS Configuration
 const cors = require('cors');
-app.use(cors());
-
+app.use(cors({
+  origin: 'https://orincore.com', // Allow only your frontend
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Allowed methods
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allowed headers
+  credentials: true // Allow credentials (cookies, tokens)
+}));
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fileUploadApp')
@@ -61,7 +65,7 @@ const authenticate = (req, res, next) => {
     if (!token) {
       return res.status(401).json({ message: 'Authentication required' });
     }
-    
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
     req.user = decoded;
     next();
@@ -110,7 +114,7 @@ const fileFilter = (req, file, cb) => {
     'image/png', // png
     'image/jpeg' // jpg/jpeg
   ];
-  
+
   // Check if the uploaded file type is allowed
   if (allowedFileTypes.includes(file.mimetype)) {
     cb(null, true);
@@ -119,13 +123,11 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configure multer upload
+// Configure multer upload (no file size limit)
 const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
-  limits: {
-    fileSize: 1024 * 1024 * 1024 // 1GB file size limit
-  }
+  limits: { fileSize: Infinity } // No file size limit
 });
 
 // Routes
@@ -133,17 +135,17 @@ const upload = multer({
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, email } = req.body;
-    
+
     // Check if user already exists
     const existingUser = await User.findOne({ $or: [{ username }, { email }] });
     if (existingUser) {
       return res.status(400).json({ message: 'Username or email already exists' });
     }
-    
+
     // Create new user
     const user = new User({ username, password, email });
     await user.save();
-    
+
     res.status(201).json({ message: 'User registered successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -154,26 +156,26 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     // Find user
     const user = await User.findOne({ username });
     if (!user) {
       return res.status(401).json({ message: 'Invalid username or password' });
     }
-    
+
     // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid username or password' });
     }
-    
+
     // Generate JWT token
     const token = jwt.sign(
       { id: user._id, username: user.username },
       process.env.JWT_SECRET || 'your_jwt_secret',
       { expiresIn: '12h' }
     );
-    
+
     res.json({ token, user: { id: user._id, username: user.username, email: user.email } });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -181,12 +183,23 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Upload file
-app.post('/api/upload', authenticate, upload.single('file'), async (req, res) => {
+app.post('/api/upload', authenticate, (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      // Handle multer errors (e.g., file size limit)
+      return res.status(400).json({ message: err.message });
+    } else if (err) {
+      // Handle other errors (e.g., file type validation)
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
-    
+
     // Save file info to database
     const file = new File({
       filename: req.file.filename,
@@ -195,9 +208,9 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
       size: req.file.size,
       userId: req.user.id
     });
-    
+
     await file.save();
-    
+
     res.status(201).json({
       message: 'File uploaded successfully',
       file: {
@@ -209,12 +222,6 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
       }
     });
   } catch (error) {
-    if (error instanceof multer.MulterError) {
-      if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ message: 'File size exceeds the limit of 1GB' });
-      }
-      return res.status(400).json({ message: error.message });
-    }
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -223,7 +230,7 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
 app.get('/api/files', authenticate, async (req, res) => {
   try {
     const files = await File.find({ userId: req.user.id }).sort({ uploadDate: -1 });
-    
+
     res.json(files.map(file => ({
       id: file._id,
       filename: file.filename,
@@ -241,18 +248,18 @@ app.get('/api/files', authenticate, async (req, res) => {
 app.delete('/api/files/:id', authenticate, async (req, res) => {
   try {
     const file = await File.findOne({ _id: req.params.id, userId: req.user.id });
-    
+
     if (!file) {
       return res.status(404).json({ message: 'File not found' });
     }
-    
+
     // Delete file from EBS volume
     const filePath = path.join(EBS_UPLOAD_PATH, req.user.id, file.filename);
     fs.unlinkSync(filePath);
-    
+
     // Delete file record from database
     await File.deleteOne({ _id: req.params.id });
-    
+
     res.json({ message: 'File deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -262,6 +269,15 @@ app.delete('/api/files/:id', authenticate, async (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
+
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({ message: err.message });
+  }
+
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+
   res.status(err.status || 500).json({ message: err.message || 'Something went wrong' });
 });
 
