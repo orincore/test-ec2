@@ -5,27 +5,13 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
-const cors = require('cors');
+// Remove cors import since we're letting Nginx handle it
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
-// Improved CORS Configuration
-const corsOptions = {
-  origin: 'https://orincore.com',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Disposition'],
-  credentials: true,
-  maxAge: 86400 // Cache preflight requests for 24 hours
-};
-
-// Apply CORS to all routes
-app.use(cors(corsOptions));
-
-// Handle preflight requests
-app.options('*', cors(corsOptions));
+// Remove all CORS configuration from Express
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fileUploadApp')
@@ -208,12 +194,8 @@ app.post('/api/upload', authenticate, (req, res) => {
 
       await file.save();
 
-      // Send CORS headers explicitly
-      res.header('Access-Control-Allow-Origin', 'https://orincore.com');
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      res.header('Access-Control-Allow-Credentials', 'true');
-
+      // Remove CORS headers here - let Nginx handle them
+      
       res.status(201).json({
         message: 'File uploaded successfully',
         file: {
@@ -302,7 +284,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`CORS enabled for origin: https://orincore.com`);
+  console.log(`Letting Nginx handle CORS for origin: https://orincore.com`);
 });
 
 module.exports = app;
